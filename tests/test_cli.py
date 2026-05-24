@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -156,3 +157,123 @@ def test_market_local_no_cache(monkeypatch, tmp_path: Path):
 
     assert result.exit_code == 1
     assert "ig sync" in result.output
+
+
+def test_watchlist_add_list_remove(monkeypatch, tmp_path: Path):
+    import ig_cli.main as main
+
+    monkeypatch.setattr(main, "ARCHIVE_PATH", tmp_path / "archive.db")
+
+    result = runner.invoke(app, ["watchlist", "add", "--kind", "hashtag", "--value", "aitools"])
+    assert result.exit_code == 0
+    assert "Added" in result.output
+
+    result = runner.invoke(app, ["watchlist", "list"])
+    assert result.exit_code == 0
+    assert "aitools" in result.output
+
+    result = runner.invoke(app, ["watchlist", "remove", "--kind", "hashtag", "--value", "aitools"])
+    assert result.exit_code == 0
+    assert "Removed" in result.output
+
+    result = runner.invoke(app, ["watchlist", "list"])
+    assert result.exit_code == 0
+    assert "aitools" not in result.output
+
+
+def test_watchlist_list_json(monkeypatch, tmp_path: Path):
+    import ig_cli.main as main
+
+    monkeypatch.setattr(main, "ARCHIVE_PATH", tmp_path / "archive.db")
+    runner.invoke(app, ["watchlist", "add", "--kind", "profile", "--value", "levelsio", "--count", "30"])
+
+    result = runner.invoke(app, ["watchlist", "list", "--format", "json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert any(e["value"] == "levelsio" for e in data)
+
+
+def test_watchlist_sync(monkeypatch, tmp_path: Path):
+    import ig_cli.main as main
+
+    db_path = tmp_path / "archive.db"
+    monkeypatch.setattr(main, "ARCHIVE_PATH", db_path)
+    monkeypatch.setattr(main, "_client", lambda: _FakeClient([_sample_post()]))
+
+    runner.invoke(app, ["watchlist", "add", "--kind", "hashtag", "--value", "aitools"])
+    result = runner.invoke(app, ["watchlist", "sync"])
+
+    assert result.exit_code == 0
+    assert "Watchlist sync complete" in result.output
+
+
+def test_digest_no_archive(monkeypatch, tmp_path: Path):
+    import ig_cli.main as main
+
+    monkeypatch.setattr(main, "ARCHIVE_PATH", tmp_path / "archive.db")
+    result = runner.invoke(app, ["digest"])
+    assert result.exit_code == 0
+    assert "No archive" in result.output
+
+
+def test_digest_shows_posts(monkeypatch, tmp_path: Path):
+    import ig_cli.main as main
+    from ig_cli.db import init_db, upsert_posts
+
+    db_path = tmp_path / "archive.db"
+    conn = init_db(db_path)
+    upsert_posts(conn, [_sample_post()], source="hashtag", tag_or_user="aitools")
+    conn.close()
+
+    monkeypatch.setattr(main, "ARCHIVE_PATH", db_path)
+    result = runner.invoke(app, ["digest", "--days", "7"])
+    assert result.exit_code == 0
+
+
+def test_top_no_archive(monkeypatch, tmp_path: Path):
+    import ig_cli.main as main
+
+    monkeypatch.setattr(main, "ARCHIVE_PATH", tmp_path / "archive.db")
+    result = runner.invoke(app, ["top"])
+    assert result.exit_code == 0
+    assert "No archive" in result.output
+
+
+def test_top_shows_posts(monkeypatch, tmp_path: Path):
+    import ig_cli.main as main
+    from ig_cli.db import init_db, upsert_posts
+
+    db_path = tmp_path / "archive.db"
+    conn = init_db(db_path)
+    upsert_posts(conn, [_sample_post()], source="hashtag", tag_or_user="aitools")
+    conn.close()
+
+    monkeypatch.setattr(main, "ARCHIVE_PATH", db_path)
+    result = runner.invoke(app, ["top", "--count", "5"])
+    assert result.exit_code == 0
+    assert "top" in result.output.lower()
+
+
+def test_today_no_archive(monkeypatch, tmp_path: Path):
+    import ig_cli.main as main
+
+    monkeypatch.setattr(main, "ARCHIVE_PATH", tmp_path / "archive.db")
+    result = runner.invoke(app, ["today"])
+    assert result.exit_code == 0
+    assert "No archive" in result.output
+
+
+def test_today_shows_recent_posts(monkeypatch, tmp_path: Path):
+    import ig_cli.main as main
+    from ig_cli.db import init_db, upsert_posts
+
+    db_path = tmp_path / "archive.db"
+    conn = init_db(db_path)
+    upsert_posts(conn, [_sample_post()], source="hashtag", tag_or_user="aitools")
+    conn.close()
+
+    monkeypatch.setattr(main, "ARCHIVE_PATH", db_path)
+    # Posts just synced → synced_at is now → always within 24h window
+
+    result = runner.invoke(app, ["today"])
+    assert result.exit_code == 0

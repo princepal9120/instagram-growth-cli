@@ -9,6 +9,14 @@ from typing import Any
 from .core.client import InstagramPostResult
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS watchlist (
+    kind      TEXT NOT NULL,
+    value     TEXT NOT NULL,
+    count     INTEGER NOT NULL DEFAULT 50,
+    added_at  INTEGER NOT NULL,
+    PRIMARY KEY (kind, value)
+);
+
 CREATE TABLE IF NOT EXISTS posts (
     id            TEXT PRIMARY KEY,
     source        TEXT NOT NULL,
@@ -113,25 +121,83 @@ def upsert_posts(
     return processed
 
 
+def add_to_watchlist(conn: sqlite3.Connection, kind: str, value: str, count: int = 50) -> None:
+    conn.execute(
+        """
+        INSERT INTO watchlist (kind, value, count, added_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(kind, value) DO UPDATE SET count = excluded.count
+        """,
+        (kind, value.lstrip("#@"), count, int(time.time())),
+    )
+    conn.commit()
+
+
+def remove_from_watchlist(conn: sqlite3.Connection, kind: str, value: str) -> bool:
+    cur = conn.execute(
+        "DELETE FROM watchlist WHERE kind = ? AND value = ?",
+        (kind, value.lstrip("#@")),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def list_watchlist(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        "SELECT kind, value, count, added_at FROM watchlist ORDER BY added_at DESC"
+    ).fetchall()
+    return [{"kind": r["kind"], "value": r["value"], "count": r["count"], "added_at": r["added_at"]} for r in rows]
+
+
+def get_recent_posts(
+    conn: sqlite3.Connection,
+    since_ts: int,
+    limit: int = 100,
+) -> list[InstagramPostResult]:
+    """Return posts synced after since_ts, ordered by like+comment engagement desc."""
+    rows = conn.execute(
+        """
+        SELECT *,
+               (COALESCE(like_count, 0) + COALESCE(comment_count, 0)) AS engagement
+        FROM posts
+        WHERE synced_at >= ?
+        ORDER BY engagement DESC
+        LIMIT ?
+        """,
+        (since_ts, limit),
+    ).fetchall()
+    return [_row_to_result(r) for r in rows]
+
+
 def search_local(
     conn: sqlite3.Connection,
     query: str,
     limit: int = 50,
+    since_ts: int | None = None,
+    until_ts: int | None = None,
 ) -> list[InstagramPostResult]:
-    # Wrap in double-quotes so FTS5 treats the whole string as a phrase,
-    # preventing special operators (OR, NOT, *, NEAR) from causing errors.
     safe_query = '"' + query.replace('"', '""') + '"'
+    clauses: list[str] = ["posts_fts MATCH ?"]
+    params: list[Any] = [safe_query]
+    if since_ts is not None:
+        clauses.append("p.create_time >= ?")
+        params.append(since_ts)
+    if until_ts is not None:
+        clauses.append("p.create_time <= ?")
+        params.append(until_ts)
+    params.append(limit)
+    where = " AND ".join(clauses)
     try:
         rows = conn.execute(
-            """
+            f"""
             SELECT p.*
             FROM posts p
             JOIN posts_fts f ON p.rowid = f.rowid
-            WHERE posts_fts MATCH ?
+            WHERE {where}
             ORDER BY rank
             LIMIT ?
             """,
-            (safe_query, limit),
+            params,
         ).fetchall()
     except sqlite3.OperationalError:
         return []
@@ -143,15 +209,22 @@ def get_cached(
     source: str,
     tag_or_user: str,
     limit: int = 50,
+    since_ts: int | None = None,
+    until_ts: int | None = None,
 ) -> list[InstagramPostResult]:
+    clauses = ["source = ?", "tag_or_user = ?"]
+    params: list[Any] = [source, tag_or_user.lstrip("#@")]
+    if since_ts is not None:
+        clauses.append("create_time >= ?")
+        params.append(since_ts)
+    if until_ts is not None:
+        clauses.append("create_time <= ?")
+        params.append(until_ts)
+    params.append(limit)
+    where = " AND ".join(clauses)
     rows = conn.execute(
-        """
-        SELECT * FROM posts
-        WHERE source = ? AND tag_or_user = ?
-        ORDER BY synced_at DESC
-        LIMIT ?
-        """,
-        (source, tag_or_user.lstrip("#@"), limit),
+        f"SELECT * FROM posts WHERE {where} ORDER BY synced_at DESC LIMIT ?",
+        params,
     ).fetchall()
     return [_row_to_result(r) for r in rows]
 

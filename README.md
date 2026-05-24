@@ -122,12 +122,46 @@ ig archive
 # Search cached posts with full-text search
 ig search "automation pain" --local
 
+# Date-range filters on local search/market
+ig search "solopreneur" --local --since 2024-01-01 --until 2024-06-30
+ig market aitools --source hashtag --local --since 2024-01-01
+
 # Full market analysis from cache — no API call
 ig market aitools --source hashtag --local
 ig market levelsio --source profile --local
 ```
 
 Archive stored at `~/.ig-cli/archive.db` (SQLite + FTS5, no extra dependencies).
+
+### Watchlist
+
+Track hashtags and profiles for regular syncing — like a subscription list.
+
+```bash
+ig watchlist add --kind hashtag --value aitools --count 100
+ig watchlist add --kind profile --value levelsio --count 50
+ig watchlist list
+ig watchlist list --format json
+ig watchlist remove --kind hashtag --value aitools
+ig watchlist sync          # sync all watched sources at once
+```
+
+### Daily digest & trending
+
+```bash
+# Today's top posts from archive (last 24 h, ranked by engagement)
+ig today
+ig today --hours 48 --format json
+
+# Weekly digest (last 7 days, top by engagement)
+ig digest
+ig digest --days 14
+
+# All-time top posts from archive
+ig top
+ig top --count 50 --source hashtag
+ig top --format json
+```
 
 ## Rate limits
 

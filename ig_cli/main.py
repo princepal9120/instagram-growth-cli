@@ -4,6 +4,7 @@ import asyncio
 import csv
 import getpass
 import json
+import time
 from enum import Enum
 from pathlib import Path
 from typing import Callable
@@ -15,7 +16,17 @@ from rich.table import Table
 from . import __version__
 from .config import ARCHIVE_PATH, IgConfig, SESSION_PATH, clear_config, ensure_app_dir, load_config, load_proxies, save_config
 from .core.client import InstagramBlockedError, InstagramPostResult, InstagramTrendClient, VideoResult
-from .db import archive_stats, get_cached, init_db, search_local, upsert_posts
+from .db import (
+    add_to_watchlist,
+    archive_stats,
+    get_cached,
+    get_recent_posts,
+    init_db,
+    list_watchlist,
+    remove_from_watchlist,
+    search_local,
+    upsert_posts,
+)
 from .market import MarketInsight, analyze_market
 
 app = typer.Typer(help="Instagram trend and growth intelligence from your terminal.", no_args_is_help=True)
@@ -155,12 +166,14 @@ def search_cmd(
     output: OutputFormat = typer.Option(OutputFormat.table, "--format"),
     proxy: str | None = typer.Option(None, "--proxy"),
     local: bool = typer.Option(False, "--local", help="Search local archive instead of hitting Instagram API."),
+    since: str | None = typer.Option(None, "--since", help="Filter by post date >= YYYY-MM-DD (requires --local)."),
+    until: str | None = typer.Option(None, "--until", help="Filter by post date <= YYYY-MM-DD (requires --local)."),
 ) -> None:
     """Search Instagram through a hashtag fallback, or search the local archive with --local."""
     if local:
         conn = init_db(ARCHIVE_PATH)
         try:
-            results = search_local(conn, query, limit=count)
+            results = search_local(conn, query, limit=count, since_ts=_parse_date(since), until_ts=_parse_date(until))
         finally:
             conn.close()
         if output == OutputFormat.json:
@@ -213,12 +226,14 @@ def market(
     output: OutputFormat = typer.Option(OutputFormat.table, "--format"),
     proxy: str | None = typer.Option(None, "--proxy"),
     local: bool = typer.Option(False, "--local", help="Analyze local archive instead of hitting Instagram API."),
+    since: str | None = typer.Option(None, "--since", help="Filter by post date >= YYYY-MM-DD (requires --local)."),
+    until: str | None = typer.Option(None, "--until", help="Filter by post date <= YYYY-MM-DD (requires --local)."),
 ) -> None:
     """Analyze Instagram posts and turn them into indie-hacker marketing actions."""
     if local:
         conn = init_db(ARCHIVE_PATH)
         try:
-            results = get_cached(conn, source.value, query, limit=count)
+            results = get_cached(conn, source.value, query, limit=count, since_ts=_parse_date(since), until_ts=_parse_date(until))
         finally:
             conn.close()
         if not results:
@@ -291,10 +306,11 @@ class SyncKind(str, Enum):
 
 @app.command()
 def sync(
-    kind: SyncKind = typer.Argument(..., help="Source type: hashtag, profile, or reels."),
+    kind: SyncKind = typer.Argument(..., help="Source type: hashtag, profile, reels, or search."),
     value: str = typer.Argument(..., help="Hashtag (without #) or Instagram username."),
     count: int = typer.Option(50, "--count", "-n", min=1, max=500),
     proxy: str | None = typer.Option(None, "--proxy"),
+    output: OutputFormat = typer.Option(OutputFormat.table, "--format"),
 ) -> None:
     """Fetch Instagram posts and store them in the local archive (~/.ig-cli/archive.db)."""
     async def fetch(client: InstagramTrendClient, px: str | None) -> list[VideoResult]:
@@ -312,20 +328,32 @@ def sync(
         saved = upsert_posts(conn, results, source=kind.value, tag_or_user=value.lstrip("#@"))
     finally:
         conn.close()
-    console.print(f"[green]Synced {saved} posts → {ARCHIVE_PATH}[/green]")
+    if output == OutputFormat.json:
+        console.print_json(json.dumps({"synced": saved, "source": kind.value, "value": value, "path": str(ARCHIVE_PATH)}))
+    else:
+        console.print(f"[green]Synced {saved} posts → {ARCHIVE_PATH}[/green]")
 
 
 @app.command()
-def archive() -> None:
+def archive(
+    output: OutputFormat = typer.Option(OutputFormat.table, "--format"),
+) -> None:
     """Show local archive stats (post count, sources, DB size)."""
     if not ARCHIVE_PATH.exists():
-        console.print("[yellow]No local archive found. Run `ig sync` to create one.[/yellow]")
+        if output == OutputFormat.json:
+            console.print_json(json.dumps({"total_posts": 0, "size_bytes": 0, "sources": []}))
+        else:
+            console.print("[yellow]No local archive found. Run `ig sync` to create one.[/yellow]")
         raise typer.Exit(0)
     conn = init_db(ARCHIVE_PATH)
     try:
         stats = archive_stats(conn)
     finally:
         conn.close()
+
+    if output == OutputFormat.json:
+        console.print_json(json.dumps(stats, ensure_ascii=False))
+        return
 
     summary = Table(title="Local archive", show_header=False)
     summary.add_column("Key", style="bold")
@@ -346,6 +374,193 @@ def archive() -> None:
             last = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M") if ts else "—"
             src_table.add_row(s["source"], s["tag_or_user"], str(s["count"]), last)
         console.print(src_table)
+
+
+@app.command()
+def watchlist(
+    action: str = typer.Argument(..., help="Action: add, remove, list, sync."),
+    kind: str = typer.Option("hashtag", "--kind", "-k", help="Source type: hashtag, profile, reels, search."),
+    value: str = typer.Option("", "--value", "-v", help="Hashtag or username (required for add/remove)."),
+    count: int = typer.Option(50, "--count", "-n", min=1, max=500, help="Posts to fetch per sync."),
+    output: OutputFormat = typer.Option(OutputFormat.table, "--format"),
+) -> None:
+    """Manage your watchlist of hashtags and profiles for regular sync."""
+    conn = init_db(ARCHIVE_PATH)
+    try:
+        if action == "add":
+            if not value:
+                console.print("[red]--value is required for watchlist add.[/red]")
+                raise typer.Exit(1)
+            add_to_watchlist(conn, kind, value, count=count)
+            console.print(f"[green]Added {kind}/{value} to watchlist.[/green]")
+
+        elif action == "remove":
+            if not value:
+                console.print("[red]--value is required for watchlist remove.[/red]")
+                raise typer.Exit(1)
+            removed = remove_from_watchlist(conn, kind, value)
+            if removed:
+                console.print(f"[green]Removed {kind}/{value} from watchlist.[/green]")
+            else:
+                console.print(f"[yellow]{kind}/{value} not in watchlist.[/yellow]")
+
+        elif action == "list":
+            entries = list_watchlist(conn)
+            if output == OutputFormat.json:
+                console.print_json(json.dumps(entries, ensure_ascii=False))
+            else:
+                tbl = Table(title="Watchlist")
+                tbl.add_column("Kind")
+                tbl.add_column("Value")
+                tbl.add_column("Count", justify="right")
+                for e in entries:
+                    tbl.add_row(e["kind"], e["value"], str(e["count"]))
+                console.print(tbl)
+
+        elif action == "sync":
+            entries = list_watchlist(conn)
+            if not entries:
+                console.print("[yellow]Watchlist is empty. Add sources with `ig watchlist add`.[/yellow]")
+                raise typer.Exit(0)
+            conn.close()
+            conn = None  # type: ignore[assignment]
+            total = 0
+            for e in entries:
+                console.print(f"  Syncing {e['kind']}/{e['value']}…")
+
+                async def fetch(client: InstagramTrendClient, px: str | None, _e: dict = e) -> list[VideoResult]:
+                    if _e["kind"] == "profile":
+                        return await client.get_user(_e["value"], count=_e["count"])
+                    if _e["kind"] == "reels":
+                        return await client.get_reels(_e["value"], count=_e["count"])
+                    if _e["kind"] == "search":
+                        return await client.search(_e["value"], count=_e["count"])
+                    return await client.get_hashtag(_e["value"], count=_e["count"])
+
+                results = _run(fetch, None)
+                db_conn = init_db(ARCHIVE_PATH)
+                try:
+                    saved = upsert_posts(db_conn, results, source=e["kind"], tag_or_user=e["value"])
+                finally:
+                    db_conn.close()
+                console.print(f"  [green]{saved} posts → {e['kind']}/{e['value']}[/green]")
+                total += saved
+            console.print(f"[bold green]Watchlist sync complete: {total} posts synced.[/bold green]")
+
+        else:
+            console.print(f"[red]Unknown action '{action}'. Use: add, remove, list, sync.[/red]")
+            raise typer.Exit(1)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.command()
+def today(
+    hours: int = typer.Option(24, "--hours", "-h", min=1, max=168, help="Look back N hours (default 24)."),
+    count: int = typer.Option(20, "--count", "-n", min=1, max=100),
+    output: OutputFormat = typer.Option(OutputFormat.table, "--format"),
+) -> None:
+    """Show today's top posts from your synced archive (last 24 hours by default)."""
+    if not ARCHIVE_PATH.exists():
+        console.print("[yellow]No archive yet. Run `ig sync` or `ig watchlist sync` first.[/yellow]")
+        raise typer.Exit(0)
+    since_ts = int(time.time()) - hours * 3600
+    conn = init_db(ARCHIVE_PATH)
+    try:
+        results = get_recent_posts(conn, since_ts=since_ts, limit=count)
+    finally:
+        conn.close()
+    if not results:
+        console.print(f"[yellow]No posts synced in the last {hours}h. Run `ig watchlist sync` to refresh.[/yellow]")
+        raise typer.Exit(0)
+    if output == OutputFormat.json:
+        console.print_json(json.dumps([r.to_dict() for r in results], ensure_ascii=False))
+    else:
+        render_table(results)
+
+
+@app.command()
+def digest(
+    days: int = typer.Option(7, "--days", "-d", min=1, max=90, help="Look back N days (default 7)."),
+    count: int = typer.Option(20, "--count", "-n", min=1, max=100),
+    output: OutputFormat = typer.Option(OutputFormat.table, "--format"),
+) -> None:
+    """Show weekly digest — top posts from the last N days by engagement."""
+    if not ARCHIVE_PATH.exists():
+        console.print("[yellow]No archive yet. Run `ig sync` or `ig watchlist sync` first.[/yellow]")
+        raise typer.Exit(0)
+    since_ts = int(time.time()) - days * 86400
+    conn = init_db(ARCHIVE_PATH)
+    try:
+        results = get_recent_posts(conn, since_ts=since_ts, limit=count)
+    finally:
+        conn.close()
+    if not results:
+        console.print(f"[yellow]No posts synced in the last {days}d. Run `ig watchlist sync` to refresh.[/yellow]")
+        raise typer.Exit(0)
+    if output == OutputFormat.json:
+        console.print_json(json.dumps([r.to_dict() for r in results], ensure_ascii=False))
+    else:
+        from datetime import datetime, timezone
+        since_dt = datetime.fromtimestamp(since_ts, tz=timezone.utc).strftime("%Y-%m-%d")
+        console.print(f"[bold]Top {len(results)} posts · last {days} days (since {since_dt})[/bold]")
+        render_table(results)
+
+
+@app.command()
+def top(
+    count: int = typer.Option(20, "--count", "-n", min=1, max=200),
+    source: str | None = typer.Option(None, "--source", "-s", help="Filter by source: hashtag, profile, reels, search."),
+    output: OutputFormat = typer.Option(OutputFormat.table, "--format"),
+) -> None:
+    """Show all-time top posts from local archive ranked by engagement."""
+    if not ARCHIVE_PATH.exists():
+        console.print("[yellow]No archive yet. Run `ig sync` or `ig watchlist sync` first.[/yellow]")
+        raise typer.Exit(0)
+    conn = init_db(ARCHIVE_PATH)
+    try:
+        clauses = []
+        params: list = []
+        if source:
+            clauses.append("source = ?")
+            params.append(source)
+        params.append(count)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = conn.execute(
+            f"""
+            SELECT *, (COALESCE(like_count, 0) + COALESCE(comment_count, 0)) AS engagement
+            FROM posts {where}
+            ORDER BY engagement DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        from .db import _row_to_result
+        results = [_row_to_result(r) for r in rows]
+    finally:
+        conn.close()
+    if not results:
+        console.print("[yellow]Archive is empty. Run `ig sync` first.[/yellow]")
+        raise typer.Exit(0)
+    if output == OutputFormat.json:
+        console.print_json(json.dumps([r.to_dict() for r in results], ensure_ascii=False))
+    else:
+        console.print(f"[bold]All-time top {len(results)} posts by engagement[/bold]")
+        render_table(results)
+
+
+def _parse_date(value: str | None) -> int | None:
+    """Parse YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS to a UTC Unix timestamp. Returns None if value is None."""
+    if value is None:
+        return None
+    from datetime import datetime, timezone
+    for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"):
+        try:
+            return int(datetime.strptime(value, fmt).replace(tzinfo=timezone.utc).timestamp())
+        except ValueError:
+            continue
+    raise typer.BadParameter(f"Date must be YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS, got: {value!r}")
 
 
 def _resolve_proxy(proxy: str | None) -> str | None:
