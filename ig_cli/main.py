@@ -45,6 +45,12 @@ class MarketSource(str, Enum):
     reels = "reels"
 
 
+class CompareKind(str, Enum):
+    hashtag = "hashtag"
+    profile = "profile"
+    reels = "reels"
+
+
 def version_callback(value: bool) -> None:
     if value:
         console.print(f"ig-cli {__version__}")
@@ -77,6 +83,10 @@ def login(
         loader = instaloader.Instaloader()
         loader.login(username, secret)
         loader.save_session_to_file(filename=str(SESSION_PATH))
+        try:
+            SESSION_PATH.chmod(0o600)
+        except OSError:
+            pass
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]Instagram login failed: {exc}[/red]")
         raise typer.Exit(1) from exc
@@ -208,6 +218,45 @@ def market(
         render_market(insight)
 
 
+@app.command()
+def compare(
+    kind: CompareKind = typer.Argument(..., help="Source type: hashtag, profile, or reels."),
+    names: list[str] = typer.Argument(..., help="2–5 hashtags, usernames, or queries to compare."),
+    count: int = typer.Option(20, "--count", "-n", min=5, max=100),
+) -> None:
+    """Compare 2–5 hashtags or profiles side by side by opportunity score."""
+    if len(names) < 2:
+        console.print("[red]Provide at least 2 names to compare.[/red]")
+        raise typer.Exit(1)
+    if len(names) > 5:
+        console.print("[red]Maximum 5 names at once.[/red]")
+        raise typer.Exit(1)
+
+    async def fetch_all() -> list[list[VideoResult]]:
+        client = _client()
+
+        async def one(name: str) -> list[VideoResult]:
+            if kind == CompareKind.profile:
+                return await client.get_user(name, count=count)
+            if kind == CompareKind.reels:
+                return await client.get_reels(name, count=count)
+            return await client.get_hashtag(name, count=count)
+
+        return list(await asyncio.gather(*[one(n) for n in names]))
+
+    try:
+        all_results = asyncio.run(fetch_all())
+    except InstagramBlockedError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from exc
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    insights = [analyze_market(results, query=name, source=kind.value) for results, name in zip(all_results, names)]
+    render_compare(insights, names)
+
+
 def _resolve_proxy(proxy: str | None) -> str | None:
     if proxy:
         return proxy
@@ -288,8 +337,40 @@ def render_market(insight: MarketInsight) -> None:
     console.print(signals)
 
     _render_list("Content angles", insight.content_angles)
+    _render_list("Reel ideas", insight.reel_ideas)
+    _render_list("Carousel ideas", insight.carousel_ideas)
+
+    lead_table = Table(title="Lead magnet", show_header=False)
+    lead_table.add_column("Idea")
+    lead_table.add_row(insight.lead_magnet)
+    console.print(lead_table)
+
+    lp_table = Table(title="Landing page angle", show_header=False)
+    lp_table.add_column("Copy")
+    lp_table.add_row(insight.landing_page_angle)
+    console.print(lp_table)
+
     _render_list("Product opportunities", insight.product_opportunities)
     _render_list("Validation plan", insight.validation_plan)
+
+
+def render_compare(insights: list[MarketInsight], names: list[str]) -> None:
+    table = Table(title="Instagram comparison", show_lines=True)
+    table.add_column("Metric", style="bold")
+    for name in names:
+        table.add_column(name, justify="right")
+
+    def row(label: str, *values: str) -> None:
+        table.add_row(label, *values)
+
+    row("Opportunity score", *[f"{i.opportunity_score}/100" for i in insights])
+    row("Decision", *[i.decision for i in insights])
+    row("Posts analyzed", *[str(i.videos_analyzed) for i in insights])
+    row("Median views/likes", *[_fmt(i.median_views) for i in insights])
+    row("Median engagement", *[f"{i.median_engagement_rate:.2%}" for i in insights])
+    row("Top keywords", *[", ".join(k for k, _ in i.top_keywords[:3]) for i in insights])
+    row("Top hashtags", *[", ".join(f"#{h}" for h, _ in i.top_hashtags[:3]) for i in insights])
+    console.print(table)
 
 
 def _render_list(title: str, rows: list[str]) -> None:

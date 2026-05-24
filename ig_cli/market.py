@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import re
+import time
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any
@@ -56,6 +57,10 @@ class MarketInsight:
     content_angles: list[str]
     product_opportunities: list[str]
     validation_plan: list[str]
+    reel_ideas: list[str]
+    carousel_ideas: list[str]
+    lead_magnet: str
+    landing_page_angle: str
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,10 +78,14 @@ class MarketInsight:
             "content_angles": self.content_angles,
             "product_opportunities": self.product_opportunities,
             "validation_plan": self.validation_plan,
+            "reel_ideas": self.reel_ideas,
+            "carousel_ideas": self.carousel_ideas,
+            "lead_magnet": self.lead_magnet,
+            "landing_page_angle": self.landing_page_angle,
         }
 
 
-def analyze_market(videos: list[VideoResult], query: str, source: str) -> MarketInsight:
+def analyze_market(videos: list[VideoResult], query: str, source: str, _now: float | None = None) -> MarketInsight:
     texts = [video.desc or "" for video in videos]
     views = [_safe_int(video.play_count) for video in videos]
     engagement_rates = [_engagement_rate(video) for video in videos if _safe_int(video.play_count) > 0]
@@ -101,7 +110,7 @@ def analyze_market(videos: list[VideoResult], query: str, source: str) -> Market
     total_views = sum(views)
     median_views = _median_int(views)
     median_er = _median_float(engagement_rates)
-    opportunity_score = _score(videos, median_views, median_er, pain_hits, buyer_hits, hook_counts)
+    opportunity_score = _score(videos, median_views, median_er, pain_hits, buyer_hits, hook_counts, _now=_now)
     decision = _decision(opportunity_score)
     top_keywords = keyword_counts.most_common(10)
     top_hashtags = hashtag_counts.most_common(10)
@@ -125,6 +134,10 @@ def analyze_market(videos: list[VideoResult], query: str, source: str) -> Market
         content_angles=_content_angles(query, seed_terms, hooks),
         product_opportunities=_product_opportunities(query, seed_terms),
         validation_plan=_validation_plan(query),
+        reel_ideas=_reel_ideas(query, seed_terms, hooks),
+        carousel_ideas=_carousel_ideas(query, seed_terms),
+        lead_magnet=_lead_magnet(query, seed_terms),
+        landing_page_angle=_landing_page_angle(query, seed_terms, decision),
     )
 
 
@@ -135,15 +148,20 @@ def _score(
     pain_hits: int,
     buyer_hits: int,
     hook_counts: Counter[str],
+    *,
+    _now: float | None = None,
 ) -> int:
     if not videos:
         return 0
-    volume = min(30, round(math.log10(max(median_views, 1)) * 8))
+    volume = min(25, round(math.log10(max(median_views, 1)) * 7))
     engagement = min(25, round(median_engagement_rate * 450))
     pain = min(20, pain_hits * 3)
     buyer = min(15, buyer_hits * 2)
-    repeatable_hooks = min(10, sum(hook_counts.values()) * 2)
-    return max(0, min(100, volume + engagement + pain + buyer + repeatable_hooks))
+    repeatable_hooks = min(5, sum(hook_counts.values()))
+    cutoff = (_now if _now is not None else time.time()) - 7 * 86400
+    recent = sum(1 for v in videos if v.create_time and v.create_time >= cutoff)
+    freshness = min(10, recent * 2)
+    return max(0, min(100, volume + engagement + pain + buyer + repeatable_hooks + freshness))
 
 
 def _decision(score: int) -> str:
@@ -186,6 +204,43 @@ def _validation_plan(query: str) -> list[str]:
     ]
 
 
+def _reel_ideas(query: str, terms: list[str], hooks: list[str]) -> list[str]:
+    primary = terms[0] if terms else query
+    secondary = terms[1] if len(terms) > 1 else "workflow"
+    hook0 = hooks[0].title() if hooks else "How-To Tutorial"
+    return [
+        f"{hook0}: show the fastest way to solve {primary} in under 60 seconds.",
+        f"POV: a {query} founder discovers they've been doing {secondary} wrong for months.",
+        f"3 tools that replaced my entire {primary} stack (honest review).",
+        f"I tested 5 approaches to {query} — here's what actually worked.",
+        f"Day in the life: how I handle {primary} in 10 minutes every morning.",
+    ]
+
+
+def _carousel_ideas(query: str, terms: list[str]) -> list[str]:
+    primary = terms[0] if terms else query
+    secondary = terms[1] if len(terms) > 1 else "process"
+    return [
+        f"The {primary} checklist every {query} creator needs (swipe for all 7 steps).",
+        f"Before vs. after: what a broken {secondary} looks like vs. a fixed one.",
+        f"5 signs your {query} strategy is hurting your growth (and how to fix each one).",
+    ]
+
+
+def _lead_magnet(query: str, terms: list[str]) -> str:
+    primary = terms[0] if terms else query
+    return f"Free {primary} audit template: 10 questions to find your biggest {query} growth leak in 5 minutes."
+
+
+def _landing_page_angle(query: str, terms: list[str], decision: str) -> str:
+    primary = terms[0] if terms else query
+    urgency = "right now" if "now" in decision.lower() else "before your competitors do"
+    return (
+        f"Headline: Stop guessing — know exactly which {primary} angles drive real {query} growth, {urgency}. "
+        f"Sub-headline: A free CLI tool that turns Instagram data into actionable decisions in seconds."
+    )
+
+
 def _engagement_rate(video: VideoResult) -> float:
     views = _safe_int(video.play_count)
     if views <= 0:
@@ -202,11 +257,19 @@ def _median_int(values: list[int]) -> int:
     if not values:
         return 0
     ordered = sorted(values)
-    return int(ordered[len(ordered) // 2])
+    n = len(ordered)
+    mid = n // 2
+    if n % 2 == 0:
+        return (ordered[mid - 1] + ordered[mid]) // 2
+    return ordered[mid]
 
 
 def _median_float(values: list[float]) -> float:
     if not values:
         return 0.0
     ordered = sorted(values)
-    return float(ordered[len(ordered) // 2])
+    n = len(ordered)
+    mid = n // 2
+    if n % 2 == 0:
+        return (ordered[mid - 1] + ordered[mid]) / 2
+    return ordered[mid]

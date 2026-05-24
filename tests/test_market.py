@@ -1,3 +1,4 @@
+
 from ig_cli.core.client import InstagramPostResult
 from ig_cli.market import analyze_market
 
@@ -35,6 +36,10 @@ def test_analyze_market_scores_and_recommends_actions():
     assert insight.product_opportunities
     assert insight.validation_plan
     assert any(keyword == "marketing" for keyword, _ in insight.top_keywords)
+    assert len(insight.reel_ideas) == 5
+    assert len(insight.carousel_ideas) == 3
+    assert insight.lead_magnet
+    assert insight.landing_page_angle
 
 
 def test_analyze_market_handles_empty_results():
@@ -43,3 +48,41 @@ def test_analyze_market_handles_empty_results():
     assert insight.opportunity_score == 0
     assert insight.decision == "Ignore for now"
     assert insight.videos_analyzed == 0
+    assert len(insight.reel_ideas) == 5
+    assert len(insight.carousel_ideas) == 3
+    assert insight.lead_magnet
+    assert insight.landing_page_angle
+
+
+def test_freshness_scoring_recent_posts():
+    fixed_now = 1_700_000_000.0  # pinned clock — avoids non-determinism
+
+    recent_post = InstagramPostResult(
+        id="1",
+        desc="How to automate founder marketing #aitools",
+        author="founder",
+        create_time=int(fixed_now) - 3600,  # 1 hour before pinned now
+        play_count=5000,
+        like_count=400,
+        comment_count=30,
+        share_count=10,
+        url="https://example.com/post",
+        raw={},
+    )
+    old_post = InstagramPostResult(
+        id="2",
+        desc="How to automate founder marketing #aitools",
+        author="founder",
+        create_time=int(fixed_now) - 30 * 86400,  # 30 days before pinned now
+        play_count=5000,
+        like_count=400,
+        comment_count=30,
+        share_count=10,
+        url="https://example.com/post",
+        raw={},
+    )
+
+    insight_recent = analyze_market([recent_post] * 3, query="aitools", source="hashtag", _now=fixed_now)
+    insight_old = analyze_market([old_post] * 3, query="aitools", source="hashtag", _now=fixed_now)
+
+    assert insight_recent.opportunity_score > insight_old.opportunity_score
