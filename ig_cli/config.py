@@ -10,6 +10,7 @@ APP_DIR = Path(os.environ.get("IG_CLI_HOME", Path.home() / ".ig-cli")).expanduse
 CONFIG_PATH = APP_DIR / "config.json"
 PROXIES_PATH = APP_DIR / "proxies.txt"
 SESSION_PATH = APP_DIR / "session"
+ARCHIVE_PATH = APP_DIR / "archive.db"
 
 
 @dataclass(slots=True)

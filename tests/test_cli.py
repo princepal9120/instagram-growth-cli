@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from typer.testing import CliRunner
 
 from ig_cli.core.client import InstagramPostResult
@@ -95,3 +97,62 @@ class _FakeClient:
 
     async def get_reels(self, username: str, count: int = 20, proxy: str | None = None) -> list[InstagramPostResult]:
         return self._results
+
+
+def test_sync_command(monkeypatch, tmp_path: Path):
+    import ig_cli.main as main
+
+    sample = [_sample_post()]
+    monkeypatch.setattr(main, "_client", lambda: _FakeClient(sample))
+    monkeypatch.setattr(main, "ARCHIVE_PATH", tmp_path / "archive.db")
+
+    result = runner.invoke(app, ["sync", "hashtag", "aitools", "--count", "5"])
+
+    assert result.exit_code == 0
+    assert "Synced" in result.output
+    assert (tmp_path / "archive.db").exists()
+
+
+def test_search_local_command(monkeypatch, tmp_path: Path):
+    import ig_cli.main as main
+    from ig_cli.db import init_db, upsert_posts
+
+    db_path = tmp_path / "archive.db"
+    conn = init_db(db_path)
+    upsert_posts(conn, [_sample_post("How to automate founder marketing for SaaS")], source="hashtag", tag_or_user="aitools")
+    conn.close()
+
+    monkeypatch.setattr(main, "ARCHIVE_PATH", db_path)
+
+    result = runner.invoke(app, ["search", "automate", "--local"])
+
+    assert result.exit_code == 0
+
+
+def test_archive_command(monkeypatch, tmp_path: Path):
+    import ig_cli.main as main
+    from ig_cli.db import init_db, upsert_posts
+
+    db_path = tmp_path / "archive.db"
+    conn = init_db(db_path)
+    upsert_posts(conn, [_sample_post()], source="hashtag", tag_or_user="aitools")
+    conn.close()
+
+    monkeypatch.setattr(main, "ARCHIVE_PATH", db_path)
+
+    result = runner.invoke(app, ["archive"])
+
+    assert result.exit_code == 0
+    assert "Total posts" in result.output
+
+
+def test_market_local_no_cache(monkeypatch, tmp_path: Path):
+    import ig_cli.main as main
+
+    db_path = tmp_path / "archive.db"
+    monkeypatch.setattr(main, "ARCHIVE_PATH", db_path)
+
+    result = runner.invoke(app, ["market", "aitools", "--local"])
+
+    assert result.exit_code == 1
+    assert "ig sync" in result.output

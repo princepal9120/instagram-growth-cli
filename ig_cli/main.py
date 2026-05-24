@@ -13,8 +13,9 @@ from rich.console import Console
 from rich.table import Table
 
 from . import __version__
-from .config import IgConfig, SESSION_PATH, clear_config, ensure_app_dir, load_config, load_proxies, save_config
+from .config import ARCHIVE_PATH, IgConfig, SESSION_PATH, clear_config, ensure_app_dir, load_config, load_proxies, save_config
 from .core.client import InstagramBlockedError, InstagramPostResult, InstagramTrendClient, VideoResult
+from .db import archive_stats, get_cached, init_db, search_local, upsert_posts
 from .market import MarketInsight, analyze_market
 
 app = typer.Typer(help="Instagram trend and growth intelligence from your terminal.", no_args_is_help=True)
@@ -153,8 +154,20 @@ def search_cmd(
     count: int = typer.Option(20, "--count", "-n", min=1, max=200),
     output: OutputFormat = typer.Option(OutputFormat.table, "--format"),
     proxy: str | None = typer.Option(None, "--proxy"),
+    local: bool = typer.Option(False, "--local", help="Search local archive instead of hitting Instagram API."),
 ) -> None:
-    """Search Instagram through a hashtag fallback."""
+    """Search Instagram through a hashtag fallback, or search the local archive with --local."""
+    if local:
+        conn = init_db(ARCHIVE_PATH)
+        try:
+            results = search_local(conn, query, limit=count)
+        finally:
+            conn.close()
+        if output == OutputFormat.json:
+            console.print_json(json.dumps([r.to_dict() for r in results], ensure_ascii=False))
+        else:
+            render_table(results)
+        return
     _run_and_render(lambda client, px: client.search(query, count=count, proxy=px), output, proxy)
 
 
@@ -199,18 +212,30 @@ def market(
     count: int = typer.Option(30, "--count", "-n", min=5, max=200),
     output: OutputFormat = typer.Option(OutputFormat.table, "--format"),
     proxy: str | None = typer.Option(None, "--proxy"),
+    local: bool = typer.Option(False, "--local", help="Analyze local archive instead of hitting Instagram API."),
 ) -> None:
     """Analyze Instagram posts and turn them into indie-hacker marketing actions."""
-    async def fetch(client: InstagramTrendClient, px: str | None) -> list[VideoResult]:
-        if source == MarketSource.profile:
-            return await client.get_user(query, count=count, proxy=px)
-        if source == MarketSource.reels:
-            return await client.get_reels(query, count=count, proxy=px)
-        if source == MarketSource.search:
-            return await client.search(query, count=count, proxy=px)
-        return await client.get_hashtag(query, count=count, proxy=px)
+    if local:
+        conn = init_db(ARCHIVE_PATH)
+        try:
+            results = get_cached(conn, source.value, query, limit=count)
+        finally:
+            conn.close()
+        if not results:
+            console.print(f"[yellow]No cached data for {source.value}/{query}. Run `ig sync {source.value} {query}` first.[/yellow]")
+            raise typer.Exit(1)
+    else:
+        async def fetch(client: InstagramTrendClient, px: str | None) -> list[VideoResult]:
+            if source == MarketSource.profile:
+                return await client.get_user(query, count=count, proxy=px)
+            if source == MarketSource.reels:
+                return await client.get_reels(query, count=count, proxy=px)
+            if source == MarketSource.search:
+                return await client.search(query, count=count, proxy=px)
+            return await client.get_hashtag(query, count=count, proxy=px)
 
-    results = _run(fetch, proxy)
+        results = _run(fetch, proxy)
+
     insight = analyze_market(results, query=query, source=source.value)
     if output == OutputFormat.json:
         console.print_json(json.dumps(insight.to_dict(), ensure_ascii=False))
@@ -255,6 +280,72 @@ def compare(
 
     insights = [analyze_market(results, query=name, source=kind.value) for results, name in zip(all_results, names)]
     render_compare(insights, names)
+
+
+class SyncKind(str, Enum):
+    hashtag = "hashtag"
+    profile = "profile"
+    reels = "reels"
+    search = "search"
+
+
+@app.command()
+def sync(
+    kind: SyncKind = typer.Argument(..., help="Source type: hashtag, profile, or reels."),
+    value: str = typer.Argument(..., help="Hashtag (without #) or Instagram username."),
+    count: int = typer.Option(50, "--count", "-n", min=1, max=500),
+    proxy: str | None = typer.Option(None, "--proxy"),
+) -> None:
+    """Fetch Instagram posts and store them in the local archive (~/.ig-cli/archive.db)."""
+    async def fetch(client: InstagramTrendClient, px: str | None) -> list[VideoResult]:
+        if kind == SyncKind.profile:
+            return await client.get_user(value, count=count, proxy=px)
+        if kind == SyncKind.reels:
+            return await client.get_reels(value, count=count, proxy=px)
+        if kind == SyncKind.search:
+            return await client.search(value, count=count, proxy=px)
+        return await client.get_hashtag(value, count=count, proxy=px)
+
+    results = _run(fetch, proxy)
+    conn = init_db(ARCHIVE_PATH)
+    try:
+        saved = upsert_posts(conn, results, source=kind.value, tag_or_user=value.lstrip("#@"))
+    finally:
+        conn.close()
+    console.print(f"[green]Synced {saved} posts → {ARCHIVE_PATH}[/green]")
+
+
+@app.command()
+def archive() -> None:
+    """Show local archive stats (post count, sources, DB size)."""
+    if not ARCHIVE_PATH.exists():
+        console.print("[yellow]No local archive found. Run `ig sync` to create one.[/yellow]")
+        raise typer.Exit(0)
+    conn = init_db(ARCHIVE_PATH)
+    try:
+        stats = archive_stats(conn)
+    finally:
+        conn.close()
+
+    summary = Table(title="Local archive", show_header=False)
+    summary.add_column("Key", style="bold")
+    summary.add_column("Value")
+    summary.add_row("Total posts", str(stats["total_posts"]))
+    summary.add_row("DB size", f"{stats['size_bytes'] / 1024:.1f} KB")
+    console.print(summary)
+
+    if stats["sources"]:
+        src_table = Table(title="Sources")
+        src_table.add_column("Kind")
+        src_table.add_column("Name")
+        src_table.add_column("Posts", justify="right")
+        src_table.add_column("Last synced")
+        for s in stats["sources"]:
+            ts = s["last_synced"]
+            from datetime import datetime, timezone
+            last = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M") if ts else "—"
+            src_table.add_row(s["source"], s["tag_or_user"], str(s["count"]), last)
+        console.print(src_table)
 
 
 def _resolve_proxy(proxy: str | None) -> str | None:
