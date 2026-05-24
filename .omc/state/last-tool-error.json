@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"rtk pytest tests/ -v 2>&1 && rtk ruff check ig_cli/ tests/ 2>&1\",\"description\":\"Run tests and lint after all fixes\"}",
-  "error": "Exit code 1\nPytest: 21 passed, 1 failed\n═══════════════════════════════════════\n\nFailures:\n1. [FAIL] test_upsert_and_retrieve\n     tests/test_db.py:41: in test_upsert_and_retrieve\n     assert n == 2\n     E   assert 14 == 2\n\n2. [FAIL] tests/test_db.py::test_upsert_and_retrieve\n     assert 14 == 2\n[full output: ~/Library/Application Support/rtk/tee/1779654751_pytest.log]\n/Users/prince/Library/Python/3.13/lib/python/site-packages/pytest_asyncio/plugin.py:208: PytestDeprecationWarning: The configura...",
-  "timestamp": "2026-05-24T20:32:31.321Z",
-  "retry_count": 1
-}
