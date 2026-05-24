@@ -1,0 +1,180 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1779653228222,
+  "projectRoot": "/Users/prince/Desktop/coding/instagram-growth-cli",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Python",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "pyproject.toml"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "pytest",
+        "version": null,
+        "category": "testing"
+      }
+    ],
+    "packageManager": null,
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": "rtk pytest tests/ -v 2>&1 && rtk ruff check ig_cli/ tests/ 2>&1",
+    "lintCommand": "ruff check",
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "tests"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 1,
+      "lastAccessed": 1779653228202,
+      "keyFiles": [
+        "instagram-growth-intelligence-flow.md"
+      ]
+    },
+    "ig_cli": {
+      "path": "ig_cli",
+      "purpose": null,
+      "fileCount": 4,
+      "lastAccessed": 1779653228203,
+      "keyFiles": [
+        "__init__.py",
+        "config.py",
+        "main.py",
+        "market.py"
+      ]
+    },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 4,
+      "lastAccessed": 1779653228203,
+      "keyFiles": [
+        "test_cli.py",
+        "test_client.py",
+        "test_config.py",
+        "test_market.py"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "ig_cli/main.py",
+      "accessCount": 26,
+      "lastAccessed": 1779654734086,
+      "type": "file"
+    },
+    {
+      "path": "ig_cli/market.py",
+      "accessCount": 12,
+      "lastAccessed": 1779653811745,
+      "type": "file"
+    },
+    {
+      "path": "",
+      "accessCount": 10,
+      "lastAccessed": 1779654620413,
+      "type": "directory"
+    },
+    {
+      "path": "tests/test_cli.py",
+      "accessCount": 10,
+      "lastAccessed": 1779654625420,
+      "type": "file"
+    },
+    {
+      "path": "ig_cli/db.py",
+      "accessCount": 10,
+      "lastAccessed": 1779654784538,
+      "type": "file"
+    },
+    {
+      "path": "tests/test_market.py",
+      "accessCount": 6,
+      "lastAccessed": 1779653823462,
+      "type": "file"
+    },
+    {
+      "path": "ig_cli/config.py",
+      "accessCount": 6,
+      "lastAccessed": 1779654645114,
+      "type": "file"
+    },
+    {
+      "path": "ig_cli/core/client.py",
+      "accessCount": 5,
+      "lastAccessed": 1779654615618,
+      "type": "file"
+    },
+    {
+      "path": "tests/test_db.py",
+      "accessCount": 4,
+      "lastAccessed": 1779654740749,
+      "type": "file"
+    },
+    {
+      "path": "docs/instagram-growth-intelligence-flow.md",
+      "accessCount": 2,
+      "lastAccessed": 1779653711661,
+      "type": "file"
+    },
+    {
+      "path": "ig_cli/__init__.py",
+      "accessCount": 2,
+      "lastAccessed": 1779654965275,
+      "type": "file"
+    },
+    {
+      "path": "pyproject.toml",
+      "accessCount": 2,
+      "lastAccessed": 1779654970145,
+      "type": "file"
+    },
+    {
+      "path": "tests/test_client.py",
+      "accessCount": 1,
+      "lastAccessed": 1779653406511,
+      "type": "file"
+    },
+    {
+      "path": "tests/test_config.py",
+      "accessCount": 1,
+      "lastAccessed": 1779653422486,
+      "type": "file"
+    },
+    {
+      "path": "README.md",
+      "accessCount": 1,
+      "lastAccessed": 1779654957047,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

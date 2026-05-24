@@ -2,9 +2,9 @@
 
 Instagram trend and growth intelligence from the terminal.
 
-`ig` helps entrepreneurs, indie hackers, and creators research Instagram hashtags, profiles, and reels, then turn the signals into product and marketing actions.
+`ig` helps entrepreneurs, indie hackers, and creators research Instagram hashtags, profiles, and reels, then turn the signals into product and marketing actions — live or from a local archive.
 
-It uses [Instaloader](https://instaloader.github.io/) as the first backend. That means it works with public Instagram data when available and can use your own Instagram session for more reliable hashtag/profile access.
+It uses [Instaloader](https://instaloader.github.io/) as the backend. Works with public Instagram data and can use your own session for more reliable hashtag/profile access.
 
 ## Philosophy
 
@@ -12,17 +12,18 @@ This is not just an Instagram downloader.
 
 The goal is to answer: **what should I do with this trend?**
 
-For a niche, hashtag, or competitor profile, `ig` can show:
+For a niche, hashtag, or competitor profile, `ig` shows:
 
 - posts/reels and metadata
-- captions, hashtags, authors, likes, comments, and views when available
-- opportunity score
-- build/content/watchlist/ignore decision
-- content angles
-- product opportunities
-- validation plan
+- opportunity score (0–100)
+- build / create content / watchlist / ignore decision
+- content angles, reel ideas, carousel ideas
+- lead magnet and landing page copy
+- product opportunities and validation plan
 
-## Install locally
+And with the local archive, all of this works **offline**.
+
+## Install
 
 ```bash
 git clone https://github.com/princepal9120/instagram-growth-cli.git
@@ -46,17 +47,14 @@ If Instagram requires a session, login with your own account:
 ```bash
 ig login --username YOUR_USERNAME
 ig status
-```
-
-Logout:
-
-```bash
 ig logout
 ```
 
 Session data is stored locally in `~/.ig-cli/`.
 
 ## Commands
+
+### Live data
 
 ```bash
 # Hashtag research
@@ -66,62 +64,80 @@ ig hashtag buildinpublic --format json
 # Profile research
 ig profile levelsio --count 20
 
-# Reels/video-like posts for a profile
+# Reels/video-like posts
 ig reels levelsio --count 20
 
-# Hashtag fallback search. Instagram full search is private.
+# Search (hashtag fallback — Instagram full search is private)
 ig search "ai tools" --count 20
 
-# Export structured data
-ig export hashtag aitools --out data/aitools.json --format json --count 100
-ig export profile levelsio --out data/levelsio.csv --format csv --count 50
+# Export to JSON or CSV
+ig export hashtag aitools --out data/aitools.json --count 100
+ig export profile levelsio --out data/levelsio.csv --format csv
 ```
 
-## Market intelligence
+### Market intelligence
 
-Use `ig market` when you want a decision, not just raw posts.
+`ig market` turns raw posts into a decision and action plan.
 
 ```bash
 ig market aitools --source hashtag --count 50
 ig market levelsio --source profile --count 30
-ig market levelsio --source reels --format json
+ig market "solo founder" --source search --format json
 ```
 
-It analyzes:
+Output includes:
 
-- opportunity score from reach, engagement, pain words, buyer intent, and repeatable hooks
-- decision: build now, create content and validate, watchlist, or ignore
+- opportunity score from reach, engagement, pain/buyer intent, freshness, and hook patterns
+- decision: **Build now**, **Create content and validate**, **Watchlist**, or **Ignore**
 - top keywords, hashtags, and hook formats
-- content angles for founders and creators
-- product opportunities like lead magnets, micro-tools, and paid workflows
-- a validation plan focused on saves/comments/profile clicks/waitlist joins
+- 4 content angles, 5 reel ideas, 3 carousel ideas
+- lead magnet idea and landing page headline
+- 3 product opportunities and a 4-step validation plan
 
-## Examples
+### Compare
+
+Compare 2–5 hashtags or profiles side by side:
 
 ```bash
-ig market "solo founder" --source search --count 30
-ig market "aitools" --source hashtag --count 50
-ig market "notiontemplates" --source hashtag --format json > market-report.json
+ig compare hashtag aitools buildinpublic solofounder
+ig compare profile levelsio marc_louvion pieter_levels
+ig compare reels levelsio marc_louvion
 ```
 
-## Known limitations
+Shows opportunity score, decision, median views, engagement rate, and top keywords for each.
 
-Instagram does not provide a simple public trending or search API.
+### Local archive (offline mode)
 
-So the MVP supports:
+Sync Instagram data to a local SQLite database, then research and analyze without hitting the API again.
 
-- hashtags
-- profiles
-- reels/video-like posts for profiles
-- search via deterministic hashtag fallback
+```bash
+# Fetch and store locally
+ig sync hashtag aitools --count 100
+ig sync profile levelsio --count 50
+ig sync reels levelsio --count 30
 
-Use moderate counts. Instagram can rate-limit or require login. This CLI does not bypass Instagram restrictions. It only uses public/session-visible data through your own local session.
+# Show archive stats
+ig archive
+
+# Search cached posts with full-text search
+ig search "automation pain" --local
+
+# Full market analysis from cache — no API call
+ig market aitools --source hashtag --local
+ig market levelsio --source profile --local
+```
+
+Archive stored at `~/.ig-cli/archive.db` (SQLite + FTS5, no extra dependencies).
+
+## Rate limits
+
+Use moderate counts. Instagram can rate-limit or require login for hashtag access. This CLI does not bypass any Instagram restrictions. It only uses public/session-visible data through your own local session.
+
+Tip: `ig sync` once, then use `--local` for all subsequent analysis.
 
 ## Roadmap
 
-- Disk cache for repeated research
-- Multi-hashtag comparison
 - Creator watchlists
 - Weekly market reports
-- Cross-platform compare with `instagram-growth-cli`
-- Optional paid backend support if public/session access becomes unreliable
+- Cross-platform compare (TikTok, YouTube Shorts)
+- Optional paid backend if public/session access becomes unreliable
